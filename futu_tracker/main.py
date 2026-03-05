@@ -19,6 +19,7 @@ class AppConfig:
     ib_host: str
     ib_port: int
     ib_client_id: int
+    ib_timeout_seconds: int
     stop_loss_percent: float
     telegram_bot_token: Optional[str]
     telegram_chat_id: Optional[str]
@@ -33,6 +34,7 @@ class AppConfig:
         ib_host = os.getenv("IB_HOST", "ib-gateway")
         ib_port = int(os.getenv("IB_PORT", "4002"))
         ib_client_id = int(os.getenv("IB_CLIENT_ID", "101"))
+        ib_timeout_seconds = int(os.getenv("IB_TIMEOUT_SECONDS", "30"))
         stop_loss_percent = float(os.getenv("STOP_LOSS_PERCENT", "3"))
         telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
         telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -45,6 +47,7 @@ class AppConfig:
             ib_host=ib_host,
             ib_port=ib_port,
             ib_client_id=ib_client_id,
+            ib_timeout_seconds=ib_timeout_seconds,
             stop_loss_percent=stop_loss_percent,
             telegram_bot_token=telegram_bot_token,
             telegram_chat_id=telegram_chat_id,
@@ -83,6 +86,7 @@ def main() -> None:
             client_id=config.ib_client_id,
             total_amount=config.total_amount,
             whitelist=config.whitelist,
+            timeout_seconds=config.ib_timeout_seconds,
             stop_loss_percent=config.stop_loss_percent,
         )
     elif config.trader == "futunn":
@@ -122,6 +126,19 @@ def main() -> None:
                     previous_symbols = current_symbols
                 else:
                     print("No symbol change; skip rebalance.")
+
+                # Check and reprice any unfilled LMT orders every loop iteration.
+                if isinstance(trader, IBKRTrader):
+                    try:
+                        reprice_actions = trader.update_unfilled_order_prices()
+                        if reprice_actions:
+                            reprice_text = "\n".join(reprice_actions)
+                            msg = f"[reprice unfilled orders]\n{reprice_text}"
+                            print(msg)
+                            messager.send(msg)
+                    except Exception as reprice_exc:
+                        print(f"[reprice error] {reprice_exc}")
+
             except Exception as exc:
                 error_msg = f"[loop error] {exc}"
                 print(error_msg)

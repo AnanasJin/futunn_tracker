@@ -12,11 +12,9 @@ services:
       TRADING_MODE: ${TRADING_MODE:-paper}
       READ_ONLY_API: ${READ_ONLY_API:-no}
       TWOFA_TIMEOUT_ACTION: ${TWOFA_TIMEOUT_ACTION:-exit}
-    ports:
-      - "4002:4002"
-      - "5900:5900"
+      BYPASS_WARNING: ${BYPASS_WARNING:-yes}
     volumes:
-      - ./ibgateway-data:/home/ibgateway/Jts
+      - ibgateway-data:/home/ibgateway/Jts
 
   futunn-tracker:
     build:
@@ -31,8 +29,11 @@ services:
       STOCK_WHITELIST: ${STOCK_WHITELIST:-}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-30}
       IB_HOST: ib-gateway
-      IB_PORT: 4002
+      IB_PORT: 4003
       IB_CLIENT_ID: ${IB_CLIENT_ID:-101}
       STOP_LOSS_PERCENT: ${STOP_LOSS_PERCENT:-3}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+
+volumes:
+  ibgateway-data:
