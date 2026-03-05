@@ -8,7 +8,10 @@
 - 当股票代码集合变化时，触发调仓
 - 每只股票目标金额 = `TOTAL_AMOUNT / 股票数`
 - 支持股票白名单：白名单中的股票不会被自动加仓/减仓/移除
-- 可选 Telegram 消息推送
+- 可选 Telegram 消息推送（由 `futu_tracker/manager.py` 统一处理）
+- 支持 Telegram 指令查询：
+  - `持仓查询`：返回当前持仓、成本价、现价和未实现盈亏
+  - `订单查询`：返回当前未完成订单
 - `TRADER` 可选 `ibkr`、`futunn`（`futunn` 当前未实现）
 
 ## 配置
@@ -27,6 +30,12 @@ cp env.sample .env
 - `STOCK_WHITELIST`：白名单！！！非常重要！！！需添加自己需要保留的已持仓股票代码，逗号分隔，例如 `AAPL,NVDA`。如果没有填写，会出售已持仓股票，从而造成不必要的损失。
 - `STOP_LOSS_PERCENT`：滑动止损百分比，默认 `4`
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`：可选
+
+Telegram 指令（发送给配置的机器人）：
+
+- `持仓查询`（也支持 `/positions`）
+- `订单查询`（也支持 `/orders`）
+- `菜单`（也支持 `/menu`），显示快捷按键
 
 IB Gateway 相关参数：
 

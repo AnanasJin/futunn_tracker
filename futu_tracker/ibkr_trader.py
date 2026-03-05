@@ -22,6 +22,7 @@ class _IBApp(EWrapper, EClient):
         self._positions_event = threading.Event()
         self._positions_lock = threading.Lock()
         self._positions: Dict[str, float] = {}
+        self._position_avg_costs: Dict[str, float] = {}
         self._next_req_id = 10_000
         self._next_req_id_lock = threading.Lock()
         self._market_events: Dict[int, threading.Event] = {}
@@ -60,8 +61,18 @@ class _IBApp(EWrapper, EClient):
         symbol = (contract.symbol or "").upper()
         if not symbol:
             return
+        del account
         with self._positions_lock:
-            self._positions[symbol] = self._positions.get(symbol, 0.0) + position
+            existing_qty = float(self._positions.get(symbol, 0.0) or 0.0)
+            existing_avg_cost = float(self._position_avg_costs.get(symbol, 0.0) or 0.0)
+            new_qty = existing_qty + position
+            if new_qty == 0:
+                self._positions[symbol] = 0.0
+                self._position_avg_costs[symbol] = 0.0
+                return
+            total_cost = (existing_qty * existing_avg_cost) + (position * float(avgCost or 0.0))
+            self._positions[symbol] = new_qty
+            self._position_avg_costs[symbol] = total_cost / new_qty
 
     def positionEnd(self) -> None:  # noqa: N802
         self._positions_event.set()
@@ -74,6 +85,7 @@ class _IBApp(EWrapper, EClient):
         total_qty = float(getattr(order, "totalQuantity", 0.0) or 0.0)
         action = (getattr(order, "action", "") or "").upper()
         order_type = (getattr(order, "orderType", "") or "").upper()
+        lmt_price = float(getattr(order, "lmtPrice", 0.0) or 0.0)
         parent_id = int(getattr(order, "parentId", 0) or 0)
         tif = (getattr(order, "tif", "") or "")
         outside_rth = bool(getattr(order, "outsideRth", False))
@@ -86,6 +98,7 @@ class _IBApp(EWrapper, EClient):
                 "remaining": remaining,
                 "action": action,
                 "order_type": order_type,
+                "lmt_price": lmt_price,
                 "parent_id": parent_id,
                 "tif": tif,
                 "outside_rth": outside_rth,
@@ -157,6 +170,7 @@ class _IBApp(EWrapper, EClient):
     def request_positions(self, timeout_seconds: int) -> Dict[str, float]:
         with self._positions_lock:
             self._positions = {}
+            self._position_avg_costs = {}
         self._positions_event.clear()
         self.reqPositions()
         if not self._positions_event.wait(timeout_seconds):
@@ -164,6 +178,24 @@ class _IBApp(EWrapper, EClient):
         self.cancelPositions()
         with self._positions_lock:
             return dict(self._positions)
+
+    def request_position_details(self, timeout_seconds: int) -> Dict[str, Dict[str, float]]:
+        with self._positions_lock:
+            self._positions = {}
+            self._position_avg_costs = {}
+        self._positions_event.clear()
+        self.reqPositions()
+        if not self._positions_event.wait(timeout_seconds):
+            raise TimeoutError("Timed out waiting for IBKR positions.")
+        self.cancelPositions()
+        with self._positions_lock:
+            details: Dict[str, Dict[str, float]] = {}
+            for symbol, qty in self._positions.items():
+                details[symbol] = {
+                    "quantity": float(qty or 0.0),
+                    "avg_cost": float(self._position_avg_costs.get(symbol, 0.0) or 0.0),
+                }
+            return details
 
     def next_order_id(self, timeout_seconds: int, refresh_from_ib: bool = True) -> int:
         if refresh_from_ib:
@@ -495,6 +527,44 @@ class IBKRTrader:
             self._app.placeOrder(order_id, contract, new_order)
 
         return actions
+
+    def get_positions_with_pnl(self) -> List[Dict[str, float]]:
+        self._ensure_connected()
+        assert self._app is not None
+        details = self._app.request_position_details(self.timeout_seconds)
+        rows: List[Dict[str, float]] = []
+        for symbol in sorted(details.keys()):
+            quantity = float(details[symbol].get("quantity", 0.0) or 0.0)
+            if quantity == 0:
+                continue
+            avg_cost = float(details[symbol].get("avg_cost", 0.0) or 0.0)
+            contract = self._build_stock_contract(symbol)
+            market_price = self._app.request_reference_price(contract, self.timeout_seconds)
+            if market_price is None:
+                market_price = 0.0
+            cost_value = avg_cost * quantity
+            market_value = float(market_price) * quantity
+            unrealized_pnl = market_value - cost_value
+            pnl_percent = (unrealized_pnl / abs(cost_value) * 100.0) if cost_value != 0 else 0.0
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "avg_cost": avg_cost,
+                    "market_price": float(market_price),
+                    "cost_value": cost_value,
+                    "market_value": market_value,
+                    "unrealized_pnl": unrealized_pnl,
+                    "pnl_percent": pnl_percent,
+                }
+            )
+        return rows
+
+    def get_unfilled_orders(self) -> List[Dict[str, object]]:
+        self._ensure_connected()
+        assert self._app is not None
+        self._app.refresh_open_orders(self.timeout_seconds)
+        return self._app.get_active_orders()
 
     def _ensure_connected(self) -> None:
         if self._app is None or not self._app.isConnected():

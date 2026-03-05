@@ -6,7 +6,7 @@ from typing import Optional, Set
 from futu_tracker.futunn_monitor import FutunnMonitor
 from futu_tracker.futunn_trader import FutunnTrader
 from futu_tracker.ibkr_trader import IBKRTrader
-from futu_tracker.messager import TelegramMessager
+from futu_tracker.manager import TelegramManager
 
 
 @dataclass
@@ -93,11 +93,24 @@ def main() -> None:
         trader = FutunnTrader()
     else:
         raise RuntimeError(f"Unsupported TRADER: {config.trader}. Use ibkr or futunn.")
-    messager = TelegramMessager(config.telegram_bot_token, config.telegram_chat_id)
+    telegram_manager: Optional[TelegramManager] = None
+    if (config.telegram_bot_token or "").strip():
+        telegram_manager = TelegramManager(
+            bot_token=config.telegram_bot_token,
+            chat_id=config.telegram_chat_id,
+            trader=trader,
+            poll_interval_seconds=1.0,
+        )
+
+    def _send_message(text: str) -> None:
+        if telegram_manager is not None:
+            telegram_manager.send(text)
 
     previous_symbols: Optional[Set[str]] = None
     trader.connect()
-    messager.send(
+    if telegram_manager is not None:
+        telegram_manager.start()
+    _send_message(
         "futunn_tracker started.\n"
         f"trader={config.trader}\n"
         f"portfolio_id={config.portfolio_id}\n"
@@ -122,7 +135,7 @@ def main() -> None:
                         f"actions:\n{action_text}"
                     )
                     print(msg)
-                    messager.send(msg)
+                    _send_message(msg)
                     previous_symbols = current_symbols
 
                 # Check and reprice any unfilled LMT orders every loop iteration.
@@ -133,18 +146,20 @@ def main() -> None:
                             reprice_text = "\n".join(reprice_actions)
                             msg = f"[reprice unfilled orders]\n{reprice_text}"
                             print(msg)
-                            messager.send(msg)
+                            _send_message(msg)
                     except Exception as reprice_exc:
                         print(f"[reprice error] {reprice_exc}")
 
             except Exception as exc:
                 error_msg = f"[loop error] {exc}"
                 print(error_msg)
-                messager.send(error_msg)
+                _send_message(error_msg)
             time.sleep(config.poll_interval_seconds)
     except KeyboardInterrupt:
         print("Exit by keyboard interrupt.")
     finally:
+        if telegram_manager is not None:
+            telegram_manager.stop()
         trader.disconnect()
 
 
