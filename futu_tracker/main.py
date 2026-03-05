@@ -124,8 +124,6 @@ def main() -> None:
                     print(msg)
                     messager.send(msg)
                     previous_symbols = current_symbols
-                else:
-                    print("No symbol change; skip rebalance.")
 
                 # Check and reprice any unfilled LMT orders every loop iteration.
                 if isinstance(trader, IBKRTrader):
