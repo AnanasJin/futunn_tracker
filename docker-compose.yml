@@ -1,0 +1,38 @@
+services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    container_name: ib-gateway
+    restart: unless-stopped
+    profiles:
+      - ibkr
+    environment:
+      TWS_USERID: ${TWS_USERID}
+      TWS_PASSWORD: ${TWS_PASSWORD}
+      TWOFA_DEVICE: ${TWOFA_DEVICE}
+      TRADING_MODE: ${TRADING_MODE:-paper}
+      READ_ONLY_API: ${READ_ONLY_API:-no}
+      TWOFA_TIMEOUT_ACTION: ${TWOFA_TIMEOUT_ACTION:-exit}
+    ports:
+      - "4002:4002"
+      - "5900:5900"
+    volumes:
+      - ./ibgateway-data:/home/ibgateway/Jts
+
+  futunn-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: futunn-tracker
+    restart: unless-stopped
+    environment:
+      TRADER: ${TRADER:-ibkr}
+      PORTFOLIO_ID: ${PORTFOLIO_ID}
+      TOTAL_AMOUNT: ${TOTAL_AMOUNT}
+      STOCK_WHITELIST: ${STOCK_WHITELIST:-}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-30}
+      IB_HOST: ib-gateway
+      IB_PORT: 4002
+      IB_CLIENT_ID: ${IB_CLIENT_ID:-101}
+      STOP_LOSS_PERCENT: ${STOP_LOSS_PERCENT:-3}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
