@@ -419,7 +419,7 @@ class IBKRTrader:
         positions = self._app.request_positions(self.timeout_seconds)
         symbols_with_open_orders = self._request_blocking_open_order_symbols()
         actions: List[str] = []
-        per_symbol_amount = self.total_amount / len(snapshot.symbols)
+        symbol_weights = self._resolve_symbol_weights(snapshot)
 
         target_symbols = {symbol.upper() for symbol in snapshot.symbols}
         current_symbols = set(positions.keys())
@@ -457,7 +457,8 @@ class IBKRTrader:
                 actions.append(f"SKIP {symbol} (cannot get IB market price).")
                 continue
 
-            desired_qty = int(per_symbol_amount / price)
+            target_amount = self.total_amount * symbol_weights.get(symbol, 0.0)
+            desired_qty = int(target_amount / price)
             current_qty = int(round(positions.get(symbol, 0.0)))
             delta = desired_qty - current_qty
             if symbol in symbols_with_open_orders:
@@ -486,6 +487,18 @@ class IBKRTrader:
             positions[symbol] = float(desired_qty)
 
         return RebalanceResult(changed=bool(actions), actions=actions)
+
+    @staticmethod
+    def _resolve_symbol_weights(snapshot: PortfolioSnapshot) -> Dict[str, float]:
+        weights = {
+            symbol.upper(): max(float(snapshot.weights.get(symbol, 0.0) or 0.0), 0.0)
+            for symbol in snapshot.symbols
+        }
+        total_weight = sum(weights.values())
+        if total_weight > 0:
+            return {symbol: value / total_weight for symbol, value in weights.items()}
+        equal_weight = 1.0 / len(snapshot.symbols)
+        return {symbol.upper(): equal_weight for symbol in snapshot.symbols}
 
     def update_unfilled_order_prices(self) -> List[str]:
         """Check all unfilled LMT orders and reprice each to (bid+ask)/2."""
@@ -684,6 +697,16 @@ class IBKRTrader:
         order_id: Optional[int] = None,
     ) -> int:
         assert self._app is not None
+        # Stop-loss orders must stay on SMART routing; do not use overnight-only contracts.
+        stop_contract = Contract()
+        stop_contract.symbol = (contract.symbol or "").upper()
+        stop_contract.secType = "STK"
+        stop_contract.exchange = "SMART"
+        stop_contract.currency = (contract.currency or "USD").upper()
+        primary_exchange = (getattr(contract, "primaryExchange", "") or "").strip().upper()
+        if primary_exchange:
+            stop_contract.primaryExchange = primary_exchange
+
         stop_order = Order()
         stop_order.action = "SELL"
         stop_order.orderType = "TRAIL"
@@ -698,7 +721,7 @@ class IBKRTrader:
         self._sanitize_order_for_gateway(stop_order)
         if order_id is None:
             order_id = self._app.next_order_id(self.timeout_seconds)
-        self._app.placeOrder(order_id, contract, stop_order)
+        self._app.placeOrder(order_id, stop_contract, stop_order)
         return order_id
 
     def _request_blocking_open_order_symbols(self) -> Set[str]:

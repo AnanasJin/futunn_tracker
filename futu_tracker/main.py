@@ -76,6 +76,10 @@ def _format_symbols(symbols: Set[str]) -> str:
     return ",".join(sorted(symbols))
 
 
+def _weights_signature(weights: dict) -> tuple:
+    return tuple(sorted((symbol.upper(), round(float(value), 8)) for symbol, value in weights.items()))
+
+
 def main() -> None:
     config = AppConfig.from_env()
     monitor = FutunnMonitor(portfolio_id=config.portfolio_id)
@@ -107,6 +111,7 @@ def main() -> None:
             telegram_manager.send(text)
 
     previous_symbols: Optional[Set[str]] = None
+    previous_weights_signature: Optional[tuple] = None
     trader.connect()
     if telegram_manager is not None:
         telegram_manager.start()
@@ -124,10 +129,18 @@ def main() -> None:
             try:
                 snapshot = monitor.fetch_snapshot()
                 current_symbols = set(snapshot.symbols)
+                current_weights_signature = _weights_signature(snapshot.weights)
 
-                if previous_symbols is None or current_symbols != previous_symbols:
+                symbols_changed = previous_symbols is None or current_symbols != previous_symbols
+                weights_changed = previous_weights_signature is None or current_weights_signature != previous_weights_signature
+                if symbols_changed or weights_changed:
                     result = trader.rebalance_to_snapshot(snapshot)
-                    event = "initial sync" if previous_symbols is None else "symbol changed"
+                    if previous_symbols is None:
+                        event = "initial sync"
+                    elif symbols_changed:
+                        event = "symbol changed"
+                    else:
+                        event = "weight changed"
                     action_text = "\n".join(result.actions) if result.actions else "No order needed."
                     msg = (
                         f"[{event}]\n"
@@ -137,6 +150,7 @@ def main() -> None:
                     print(msg)
                     _send_message(msg)
                     previous_symbols = current_symbols
+                    previous_weights_signature = current_weights_signature
 
                 # Check and reprice any unfilled LMT orders every loop iteration.
                 if isinstance(trader, IBKRTrader):

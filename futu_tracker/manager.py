@@ -1,12 +1,16 @@
 import threading
 import time
+from datetime import datetime, timedelta
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 from telegram import Bot, ReplyKeyboardMarkup, Update
 from telegram.error import TelegramError, TimedOut
 
 
 class TelegramManager:
+    _BJ_TZ = ZoneInfo("Asia/Shanghai")
+
     def __init__(
         self,
         bot_token: Optional[str],
@@ -24,6 +28,7 @@ class TelegramManager:
         self._bot: Optional[Bot] = Bot(token=self.bot_token) if self.bot_token else None
         self._polling_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._next_daily_positions_push_at: Optional[datetime] = None
         self._command_keyboard = ReplyKeyboardMarkup(
             [["持仓查询", "订单查询"]],
             resize_keyboard=True,
@@ -52,6 +57,7 @@ class TelegramManager:
         if self._polling_thread is not None and self._polling_thread.is_alive():
             return
         self._stop_event.clear()
+        self._next_daily_positions_push_at = self._get_next_daily_push_time()
         self._polling_thread = threading.Thread(target=self._polling_loop, daemon=True)
         self._polling_thread.start()
 
@@ -79,6 +85,7 @@ class TelegramManager:
         while not self._stop_event.is_set():
             try:
                 self.poll()
+                self._maybe_send_daily_positions()
             except Exception as exc:  # noqa: BLE001
                 print(f"[TelegramManager][error] polling loop failed: {exc}")
             self._stop_event.wait(self.poll_interval_seconds)
@@ -172,3 +179,27 @@ class TelegramManager:
             self._bot.send_message(chat_id=self.chat_id, text=text, reply_markup=self._command_keyboard)
         except TelegramError as exc:
             print(f"[TelegramManager][error] sendMessage failed: {exc}")
+
+    @classmethod
+    def _get_next_daily_push_time(cls, now: Optional[datetime] = None) -> datetime:
+        current = now or datetime.now(cls._BJ_TZ)
+        today_target = current.replace(hour=8, minute=0, second=0, microsecond=0)
+        if current < today_target:
+            return today_target
+        return today_target + timedelta(days=1)
+
+    def _maybe_send_daily_positions(self) -> None:
+        if self._next_daily_positions_push_at is None:
+            self._next_daily_positions_push_at = self._get_next_daily_push_time()
+        now_bj = datetime.now(self._BJ_TZ)
+        if now_bj < self._next_daily_positions_push_at:
+            return
+
+        text = "[每日08:00持仓]\n" + self._build_positions_text()
+        sent = self.send(text)
+        if sent:
+            self._next_daily_positions_push_at = self._get_next_daily_push_time(now_bj + timedelta(seconds=1))
+            return
+
+        # Retry in 5 minutes if sending failed.
+        self._next_daily_positions_push_at = now_bj + timedelta(minutes=5)

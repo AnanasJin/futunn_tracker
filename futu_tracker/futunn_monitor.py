@@ -19,6 +19,7 @@ FUTUNN_REQUEST_HEADERS = {
 class PortfolioSnapshot:
     symbols: Set[str]
     prices: Dict[str, float]
+    weights: Dict[str, float]
 
 
 class FutunnMonitor:
@@ -50,17 +51,37 @@ class FutunnMonitor:
 
         symbols: Set[str] = set()
         prices: Dict[str, float] = {}
+        weights: Dict[str, float] = {}
         for item in record_items:
             symbol = str(item.get("stock_code", "")).strip().upper()
             if not symbol:
                 continue
             symbols.add(symbol)
             prices[symbol] = self._normalize_price(item.get("current_price", 0))
+            weights[symbol] = self._normalize_ratio(item.get("total_ratio", 0))
 
-        return PortfolioSnapshot(symbols=symbols, prices=prices)
+        normalized_weights = self._normalize_weights(weights, symbols)
+        return PortfolioSnapshot(symbols=symbols, prices=prices, weights=normalized_weights)
 
     @staticmethod
     def _normalize_price(raw_price: int) -> float:
         if not raw_price:
             return 0.0
         return float(raw_price) / PRICE_SCALE
+
+    @staticmethod
+    def _normalize_ratio(raw_ratio: int) -> float:
+        if not raw_ratio:
+            return 0.0
+        return max(float(raw_ratio) / PRICE_SCALE, 0.0)
+
+    @staticmethod
+    def _normalize_weights(weights: Dict[str, float], symbols: Set[str]) -> Dict[str, float]:
+        positive_sum = sum(value for value in weights.values() if value > 0)
+        if positive_sum > 0:
+            return {symbol: max(weights.get(symbol, 0.0), 0.0) / positive_sum for symbol in symbols}
+
+        if not symbols:
+            return {}
+        equal_weight = 1.0 / len(symbols)
+        return {symbol: equal_weight for symbol in symbols}
